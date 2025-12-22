@@ -61,6 +61,8 @@ The deployed commit exists in this repository and matches current HEAD.
 
 Only the expected secrets are present. No hidden or unexpected environment variables.
 
+**Note:** `BASE_URL` is dead code — defined but never used. It was added for MCP response URLs that were later removed. Can be safely removed from allowed_envs.
+
 ### 5. Pre-launch Script
 
 | Attribute | Value |
@@ -75,6 +77,89 @@ Only the expected secrets are present. No hidden or unexpected environment varia
 - Better error handling for immutable filesystems
 
 These changes are benign improvements to password handling robustness.
+
+## Trust Model
+
+### What's Cryptographically Verified vs Trusted
+
+| Claim | Verified By | Trusted From |
+|-------|-------------|--------------|
+| TEE is genuine Intel TDX | Intel hardware attestation | — |
+| TEE config hash is `3ed098...` | RTMR3 measurement | — |
+| Config pulls tag `hermes:867bd06` | In compose_hash | — |
+| Tag resolves to digest `sha256:c98df00...` | — | Docker Hub |
+| Static files match git 867bd06 | SHA-256 comparison | — |
+| Compiled JS matches TypeScript source | — | GitHub Actions + npm + tsc |
+| Dependencies are authentic | — | npm registry |
+
+### Verification Boundaries
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                 CRYPTOGRAPHICALLY VERIFIED              │
+├─────────────────────────────────────────────────────────┤
+│  Intel   → Hardware is genuine TDX                      │
+│  RTMR3   → TEE config hash is 3ed098...                 │
+│  Us      → Config says "pull hermes:867bd06"            │
+│  Git     → Commit 867bd06 contains specific files       │
+│  Us      → Docker image static files match git commit   │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+              "What about compiled code?"
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│                    TRUSTED PARTIES                      │
+├─────────────────────────────────────────────────────────┤
+│  Docker Hub       → Tag → Digest mapping                │
+│  GitHub Actions   → Compiled JS from TypeScript source  │
+│  npm registry     → Dependencies are authentic          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Docker Image Provenance
+
+```
+Image:    generalsemantics/hermes:867bd06
+Digest:   sha256:c98df00269e059ad0f36aa734769c56ea9d47d40020596001ba5524f839ec92f
+Created:  2025-12-20T19:59:24.766Z
+Source:   https://github.com/jameslbarnes/hermes
+Revision: 867bd0653b72a732c80e2b155e73d29dd4f5c120
+```
+
+OCI labels are self-attested by the build process, not cryptographically signed.
+
+### Static File Verification
+
+We verified static files in the Docker image match git commit 867bd06:
+
+| File | Docker Image Hash | Git Commit Hash | Match |
+|------|-------------------|-----------------|-------|
+| index.html | `021d93ac2cbe763a...` | `021d93ac2cbe763a...` | ✓ |
+| setup.html | `63c41f807ff1c248...` | `63c41f807ff1c248...` | ✓ |
+
+This proves the image contains files from commit 867bd06 — git's content-addressing verifies this cryptographically.
+
+### What Remains Trusted
+
+1. **Docker Hub** — Tag `867bd06` points to digest `sha256:c98df00...`
+2. **GitHub Actions + npm + tsc** — Compiled JavaScript (`dist/http.js`) matches TypeScript source
+3. **npm registry** — `node_modules` contains authentic packages
+
+### Improving Trust Guarantees
+
+To reduce trust assumptions:
+
+1. **SLSA Provenance** — Enable signed build attestations:
+   ```yaml
+   - uses: docker/build-push-action@v5
+     with:
+       provenance: true
+   ```
+   Then verify with: `cosign verify-attestation --type slsaprovenance ...`
+
+2. **Reproducible Builds** — Would eliminate need to trust GitHub Actions
+
+3. **Vendored Dependencies** — Would eliminate need to trust npm registry
 
 ## Endpoints Used
 
